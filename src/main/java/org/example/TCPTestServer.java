@@ -1,57 +1,62 @@
 package org.example;
 
-import java.io.IOException;
-import java.io.InputStream;
+import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.util.LinkedList;
-import java.util.List;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
+
+import static java.nio.file.Files.newOutputStream;
 
 public class TCPTestServer {
   private static final int port = 3333;
   private static final Object lock = new Object();
 
-  private static final List<Socket> sockets = new LinkedList<Socket>();
+  private static final BlockingQueue<String> q = new LinkedBlockingQueue<>();
+  private static final Path FILE_PATH = Path.of("file");
+
   public static void main(String[] args) {
-    new Thread(()->{
-      while (true) {
-        for (Socket socket : sockets) {
-          System.out.println("socket:" + socket);
-          handleClient(socket);
-        }
-      }
-    }).start();
+    new Thread(TCPTestServer::writeToFile).start();
+
+    try {
+      OutputStream outputStream = newOutputStream(FILE_PATH, java.nio.file.StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+    } catch (IOException e) {
+      System.err.println(e.getMessage());
+    }
 
     try (ServerSocket serverSocket = new ServerSocket(port)) {
       while (true) {
         Socket socket = serverSocket.accept();
-//        sockets.add(socket);
         new Thread(() -> handleClient(socket)).start();
       }
     } catch (IOException e) {
-      System.out.println("서버 오류 : " + e.getMessage());
+      System.out.println(e.getMessage());
     }
   }
 
-  private static void handleClient (Socket socket) {
-    try (InputStream is = socket.getInputStream()) {
-      while (is.available() > 0) {
-        outer:
-        {
-          synchronized (lock) {
-            int r = is.read();
-            for (; r > -1; r = is.read()) {
-              System.err.write(r);
-              if (r == '\n') {
-//                  Thread.sleep(1);
-                break outer;
-              }
-            }
-          }
-        }
+  private static void handleClient(Socket socket) {
+    try (BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()))) {
+      String line;
+      while ((line = reader.readLine()) != null) {
+        q.put(line);
       }
-
       System.err.println("end of client");
+    } catch (IOException | InterruptedException e) {
+      System.err.println("error : " + e.getMessage());
+    }
+  }
+
+  private static void writeToFile () {
+    try (BufferedWriter writer = Files.newBufferedWriter(FILE_PATH)) {
+      while (true) {
+        String data = q.take();
+        writer.write(data + "\n");
+        writer.flush();
+        System.err.println("file save : " + data);
+      }
     } catch (Exception e) {
       System.err.println(e.getMessage());
     }
